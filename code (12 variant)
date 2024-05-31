@@ -1,0 +1,134 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <windows.h>
+#include <sys/stat.h>
+using namespace std;
+
+void show_help() 
+{
+    cout << "Usage: sync_files [options] <dir1> <dir2> <pattern>\n";
+    cout << "Options:\n";
+    cout << "  -h, --help        Show this help message\n";
+}
+
+bool parse_arguments(int argc, char* argv[], wstring& dir1, wstring& dir2, wstring& pattern) 
+{
+    if (argc < 4) 
+    {
+        show_help();
+        return false;
+    }
+
+    for (int i = 1; i < argc; ++i) 
+    {
+        string arg = argv[i];
+        if (arg == "-h" || arg == "--help") 
+        {
+            show_help();
+            exit(0);
+        }
+    }
+
+    dir1 = wstring(argv[argc - 3], argv[argc - 3] + strlen(argv[argc - 3]));
+    dir2 = wstring(argv[argc - 2], argv[argc - 2] + strlen(argv[argc - 2]));
+    pattern = wstring(argv[argc - 1], argv[argc - 1] + strlen(argv[argc - 1]));
+    return true;
+}
+
+bool matches_pattern(const wstring& filename, const wstring& pattern) 
+{
+    return filename.find(pattern) != wstring::npos;
+}
+
+time_t get_last_write_time(const wstring& filepath) 
+{
+    struct _stat attr;
+    _wstat(filepath.c_str(), &attr);
+    return attr.st_mtime;
+}
+
+void copy_file(const wstring& source, const wstring& destination) 
+{
+    ifstream src(source, ios::binary);
+    ofstream dest(destination, ios::binary);
+    dest << src.rdbuf();
+}
+
+vector<wstring> get_files_in_directory(const wstring& directory) 
+{
+    vector<wstring> files;
+    wstring search_path = directory + L"\\*.*";
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW(search_path.c_str(), &fd);
+    if (hFind != INVALID_HANDLE_VALUE) 
+    {
+        do 
+        {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) 
+            {
+                files.push_back(fd.cFileName);
+            }
+        } while (FindNextFileW(hFind, &fd));
+        FindClose(hFind);
+    }
+    return files;
+}
+
+void sync_directories(const wstring& dir1, const wstring& dir2, const wstring& pattern) 
+{
+    vector<wstring> files = get_files_in_directory(dir1);
+    for (const wstring& filename : files) 
+    {
+        if (matches_pattern(filename, pattern)) 
+        {
+            wstring filepath1 = dir1 + L"\\" + filename;
+            wstring filepath2 = dir2 + L"\\" + filename;
+
+            if (GetFileAttributesW(filepath2.c_str()) != INVALID_FILE_ATTRIBUTES) 
+            { 
+                time_t time1 = get_last_write_time(filepath1);
+                time_t time2 = get_last_write_time(filepath2);
+
+                if (difftime(time1, time2) > 0) 
+                { 
+                    _wremove(filepath2.c_str());
+                    copy_file(filepath1, filepath2);
+                    wcout << L"Updated: " << filepath2 << endl;
+                }
+                else 
+                {
+                    wcout << L"Skipped: " << filepath2 << endl;
+                }
+            }
+            else 
+            { 
+                copy_file(filepath1, filepath2);
+                wcout << L"Copied: " << filepath2 << endl;
+            }
+        }
+    }
+}
+
+int main(int argc, char* argv[]) 
+{
+    wstring dir1, dir2, pattern;
+
+    if (!parse_arguments(argc, argv, dir1, dir2, pattern)) 
+    {
+        return 1;  
+    }
+
+    try 
+    {
+        sync_directories(dir1, dir2, pattern);
+    }
+    catch (const exception& e) 
+    {
+        wcerr << L"Error: " << e.what() << endl;
+        return 2; 
+    }
+
+    return 0;  
+}
